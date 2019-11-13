@@ -13,6 +13,9 @@ from os import path
 
 from sentencesplit import sentencebreaks_to_newlines
 
+from nltk import word_tokenize
+import itertools
+
 # assume script in brat tools/ directory, extend path to find sentencesplit.py
 sys.path.append(os.path.join(os.path.dirname(__file__), '../server/src'))
 sys.path.append('.')
@@ -84,7 +87,6 @@ def strip_labels(lines):
             fields = l.split('\t')
             labels.append(fields[0])
             stripped.append('\t'.join(fields[1:]))
-
     return labels, stripped
 
 
@@ -114,15 +116,18 @@ def attach_labels(labels, lines):
 # NERsuite tokenization: any alnum sequence is preserved as a single
 # token, while any non-alnum character is separated into a
 # single-character token. TODO: non-ASCII alnum.
-TOKENIZATION_REGEX = re.compile(r'([0-9a-zA-Z]+|[^0-9a-zA-Z])')
+TOKENIZATION_REGEX = re.compile(r'([0-9\w]+|[^0-9\w])', re.UNICODE)
 
 NEWLINE_TERM_REGEX = re.compile(r'(.*?\n)')
+
+def non_ascii_tokenizer(s):
+    ll = [[word_tokenize(w), ' '] for w in s.split()]
+    return (list(itertools.chain(*list(itertools.chain(*ll)))))
 
 
 def text_to_conll(f):
     """Convert plain text into CoNLL format."""
     global options
-
     if options.nosplit:
         sentences = f.readlines()
     else:
@@ -130,14 +135,19 @@ def text_to_conll(f):
         for l in f:
             l = sentencebreaks_to_newlines(l)
             sentences.extend([s for s in NEWLINE_TERM_REGEX.split(l) if s])
-
     lines = []
 
     offset = 0
     for s in sentences:
         nonspace_token_seen = False
 
-        tokens = [t for t in TOKENIZATION_REGEX.split(s) if t]
+        #tokens = [t for t in TOKENIZATION_REGEX.split(s) if t]
+        tokens = [t for t in non_ascii_tokenizer(s) if t]
+
+        # " " single-space is appended to token list
+        # to fix the multi-line issue
+        # Changed by Oyesh
+        tokens.append(" ")
 
         for t in tokens:
             if not t.isspace():
@@ -148,7 +158,7 @@ def text_to_conll(f):
         # sentences delimited by empty lines
         if nonspace_token_seen:
             lines.append([])
-
+    
     # add labels (other than 'O') from standoff annotation if specified
     if options.annsuffix:
         lines = relabel(lines, get_annotations(f.name))
@@ -162,7 +172,6 @@ def relabel(lines, annotations):
 
     # TODO: this could be done more neatly/efficiently
     offset_label = {}
-
     for tb in annotations:
         for i in range(tb.start, tb.end):
             if i in offset_label:
@@ -175,7 +184,7 @@ def relabel(lines, annotations):
             prev_label = None
             continue
         tag, start, end, token = l
-
+        
         # TODO: warn for multiple, detailed info for non-initial
         label = None
         for o in range(start, end):
@@ -219,7 +228,7 @@ def process_files(files):
                 if fn == '-':
                     lines = process(sys.stdin)
                 else:
-                    with open(fn, 'rU') as f:
+                    with open(fn, 'r', encoding='utf8') as f:
                         lines = process(f)
 
                 # TODO: better error handling
@@ -230,7 +239,7 @@ def process_files(files):
                     sys.stdout.write(''.join(lines))
                 else:
                     ofn = path.splitext(fn)[0] + options.outsuffix
-                    with open(ofn, 'wt') as of:
+                    with open(ofn, 'wt', encoding='utf8') as of:
                         of.write(''.join(lines))
 
             except BaseException:
@@ -247,27 +256,44 @@ def process_files(files):
 
 TEXTBOUND_LINE_RE = re.compile(r'^T\d+\t')
 
-Textbound = namedtuple('Textbound', 'start end type text')
+# Changed by Oyesh
+ASPECTBOUND_LINE_RE = re.compile(r'^A\d+\t')
+#TEXTBOUND_LINE_RE = re.compile(r'^[TA]\d+\t')
 
+Textbound = namedtuple('Textbound', 'start end type text')
+Aspectbound = namedtuple('Aspectbound', 'start end type text')
 
 def parse_textbounds(f):
     """Parse textbound annotations in input, returning a list of Textbound."""
 
     textbounds = []
+    aspectbounds = []
 
     for l in f:
         l = l.rstrip('\n')
 
-        if not TEXTBOUND_LINE_RE.search(l):
-            continue
+        null_target = False
+	# Changed by Oyesh for tagging based on Attributes
+        # on annotation file
+        if ASPECTBOUND_LINE_RE.search(l):
+            id_, type_offsets = l.split('\t')
+            type_2, pointer, aspect = type_offsets.split()
+            start, end, type_1, text = textbounds[-1]
+            #if aspect != "YES":
+            #    null_target = True
+            aspectbounds.append(Aspectbound(start, end, aspect, text))
+            #print(start, end, type_1, aspect, text)
 
-        id_, type_offsets, text = l.split('\t')
-        type_, start, end = type_offsets.split()
-        start, end = int(start), int(end)
-
-        textbounds.append(Textbound(start, end, type_, text))
+        elif TEXTBOUND_LINE_RE.search(l):
+            id_, type_offsets, text = l.split('\t')
+            type_, start, end = type_offsets.split()
+            start, end = int(start), int(end)
+            #if not null_target:
+            #    null_target = False
+            textbounds.append(Textbound(start, end, type_, text))      # To remove the sentiment part
 
     return textbounds
+    #return aspectbounds
 
 
 def eliminate_overlaps(textbounds):
@@ -298,7 +324,7 @@ def get_annotations(fn):
 
     annfn = path.splitext(fn)[0] + options.annsuffix
 
-    with open(annfn, 'rU') as f:
+    with open(annfn, 'r', encoding='utf8') as f:
         textbounds = parse_textbounds(f)
 
     textbounds = eliminate_overlaps(textbounds)
@@ -326,3 +352,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
+
