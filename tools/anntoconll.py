@@ -147,7 +147,7 @@ def text_to_conll(f):
         # " " single-space is appended to token list
         # to fix the multi-line issue
         # Changed by Oyesh
-        tokens.append(" ")
+        #tokens.append("")
 
         for t in tokens:
             if not t.isspace():
