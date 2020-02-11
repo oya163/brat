@@ -163,7 +163,8 @@ def text_to_conll(f):
     if options.annsuffix:
         lines = relabel(lines, get_annotations(f.name))
 
-    lines = [[l[0], str(l[1]), str(l[2]), l[3]] if l else l for l in lines]
+    #lines = [[l[0], str(l[1]), str(l[2]), l[3]] if l else l for l in lines]
+    lines = [[l[3], str(l[1]), str(l[2]), l[0]] if l else l for l in lines]
     return StringIO('\n'.join(('\t'.join(l) for l in lines)))
 
 
